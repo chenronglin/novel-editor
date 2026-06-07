@@ -12,6 +12,7 @@ export {
 
 // Extensions
 export {
+  ActiveBlock,
   AIHighlight,
   removeAIHighlight,
   addAIHighlight,
@@ -22,6 +23,8 @@ export {
   Color,
   HighlightExtension,
   CustomKeymap,
+  EditSuggestion,
   CharacterCount,
   RevisionTracking,
+  Comment,
 } from "./extensions";

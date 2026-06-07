@@ -4,7 +4,10 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { TextStyle } from "@tiptap/extension-text-style";
 import TiptapUnderline from "@tiptap/extension-underline";
 import StarterKit from "@tiptap/starter-kit";
+import ActiveBlock from "./active-block";
+import Comment from "./comment";
 import CustomKeymap from "./custom-keymap";
+import EditSuggestion from "./edit-suggestion";
 import RevisionTracking from "./revision-tracking";
 
 import CharacterCount from "@tiptap/extension-character-count";
@@ -24,8 +27,13 @@ const HighlightExtension = Highlight.configure({
 });
 
 export * from "./ai-highlight";
+export * from "./active-block";
+export * from "./comment";
+export * from "./edit-suggestion";
 export * from "./revision-tracking";
 export {
+  ActiveBlock,
+  EditSuggestion,
   PlaceholderExtension as Placeholder,
   StarterKit,
   TiptapUnderline,
@@ -35,4 +43,5 @@ export {
   CustomKeymap,
   CharacterCount,
   RevisionTracking,
+  Comment,
 };
