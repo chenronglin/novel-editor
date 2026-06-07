@@ -58,6 +58,12 @@
   cursor: help;
 }
 
+.ProseMirror span[data-discussion-active="true"] {
+  border-radius: 0.2rem;
+  background-color: rgb(254 240 138 / 0.42);
+  box-shadow: 0 0 0 2px rgb(250 204 21 / 0.3);
+}
+
 .ProseMirror:not(.dragging) .ProseMirror-selectednode {
   outline: none !important;
   background-color: var(--novel-highlight-blue);

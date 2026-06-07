@@ -252,8 +252,4 @@ const onUpload = async (file: File) => {
 
 1. 把编辑器状态从 `localStorage` 抽成可配置 `onChange/onSave`。
 2. 给 `TailwindAdvancedEditor` 增加 props，而不是把默认内容、保存逻辑、上传逻辑写死。
-3. 恢复真实图片上传 route。
 4. 恢复 AI 菜单，但作为可选能力。
-5. 梳理 `src/lib/novel`，删掉首版不用的扩展文件。
-6. 增加 Playwright 或 component-level smoke tests。
-7. 评估是否将 `example/` 变成未来的正式 app 目录，或者继续作为迁移实验场。
