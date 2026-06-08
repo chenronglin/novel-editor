@@ -3,9 +3,10 @@ import { ref, watch, onMounted, onBeforeUnmount } from "vue";
 import { type Editor } from "@tiptap/vue-3";
 import { type Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
-import type { EditorState } from "@tiptap/pm/state";
+import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { ArrowRightLeft, MessageSquareText, Minus, Plus, Replace, Trash2 } from "lucide-vue-next";
 import { cn } from "../lib/utils";
+import { setActiveDiscussion } from "../lib/novel/extensions/discussion-highlight";
 
 interface DiscussionSidebarProps {
   editor: Editor | null;
@@ -228,27 +229,51 @@ const items = ref<DiscussionItem[]>([]);
 const activeKey = ref<string | null>(null);
 const cardRefs = ref<Record<string, HTMLElement>>({});
 
-const updateSidebar = () => {
+let itemsTimer: ReturnType<typeof setTimeout> | null = null;
+
+// 重算修订/批注卡片需要全文遍历，开销随文档增长。仅在内容变化时触发，并做防抖，
+// 避免逐字输入时反复扫描长文档造成输入卡顿。
+const scheduleItemsUpdate = () => {
+  if (itemsTimer) clearTimeout(itemsTimer);
+  itemsTimer = setTimeout(() => {
+    itemsTimer = null;
+    if (props.editor) items.value = collectDiscussionItems(props.editor.state);
+  }, 250);
+};
+
+// 仅依据光标位置计算高亮项，开销很小，可随每次 transaction 即时执行。
+const updateActiveKey = () => {
+  activeKey.value = props.editor ? getActiveKeyFromSelection(props.editor.state) : null;
+};
+
+const handleTransaction = ({ transaction }: { transaction: Transaction }) => {
+  if (!props.editor) return;
+  if (transaction.docChanged) scheduleItemsUpdate();
+  updateActiveKey();
+};
+
+// 初始化或切换 editor 时立即做一次完整刷新（不走防抖）。
+const refreshAll = () => {
   if (!props.editor) {
     items.value = [];
     activeKey.value = null;
     return;
   }
-  const state = props.editor.state;
-  items.value = collectDiscussionItems(state);
-  activeKey.value = getActiveKeyFromSelection(state);
+  items.value = collectDiscussionItems(props.editor.state);
+  updateActiveKey();
 };
 
-// Listen to editor transaction and selection changes to update sidebar items
 const registerEditorEvents = (editor: Editor) => {
-  editor.on("transaction", updateSidebar);
-  editor.on("selectionUpdate", updateSidebar);
-  updateSidebar();
+  editor.on("transaction", handleTransaction);
+  refreshAll();
 };
 
 const unregisterEditorEvents = (editor: Editor) => {
-  editor.off("transaction", updateSidebar);
-  editor.off("selectionUpdate", updateSidebar);
+  editor.off("transaction", handleTransaction);
+  if (itemsTimer) {
+    clearTimeout(itemsTimer);
+    itemsTimer = null;
+  }
 };
 
 onMounted(() => {
@@ -279,25 +304,12 @@ watch(
 watch([activeKey, items], () => {
   if (!props.editor) return;
 
-  const dom = props.editor.view.dom;
-
-  dom.querySelectorAll<HTMLElement>("span[data-discussion-active]").forEach((element) => {
-    element.removeAttribute("data-discussion-active");
-  });
-
   const activeItem = items.value.find((item) => item.key === activeKey.value);
 
-  if (!activeItem) return;
+  // 高亮交给 discussion-highlight 扩展用 Decoration 渲染，不再直接操作编辑器 DOM。
+  setActiveDiscussion(props.editor, activeItem?.id ?? null);
 
-  const attributeName = activeItem.source === "comment" ? "data-comment-id" : "data-revision-id";
-
-  dom.querySelectorAll<HTMLElement>(`span[${attributeName}]`).forEach((element) => {
-    if (element.getAttribute(attributeName) === activeItem.id) {
-      element.setAttribute("data-discussion-active", "true");
-    }
-  });
-
-  // Scroll matching sidebar card into view
+  // 侧边栏对应卡片滚动到可见区域。
   if (activeKey.value) {
     const card = cardRefs.value[activeKey.value];
     if (card) {
@@ -307,7 +319,7 @@ watch([activeKey, items], () => {
       });
     }
   }
-}, { flush: "post", deep: true });
+}, { flush: "post" });
 
 const clampPosition = (editor: Editor, pos: number) => Math.max(0, Math.min(pos, editor.state.doc.content.size));
 

@@ -29,7 +29,7 @@
 }
 
 .ProseMirror span[data-revision-role="inserted"] {
-  color: #15803d;
+  color: var(--revision-inserted);
   text-decoration-line: underline;
   text-decoration-color: currentColor;
   text-decoration-thickness: 1.5px;
@@ -37,14 +37,14 @@
 }
 
 .ProseMirror span[data-revision-kind="delete"][data-revision-role="deleted"] {
-  color: #dc2626;
+  color: var(--revision-deleted);
   text-decoration-line: line-through;
   text-decoration-color: currentColor;
   text-decoration-thickness: 1.5px;
 }
 
 .ProseMirror span[data-revision-kind="replace"][data-revision-role="original"] {
-  color: #ca8a04;
+  color: var(--revision-original);
   text-decoration-line: line-through;
   text-decoration-color: currentColor;
   text-decoration-thickness: 1.5px;
@@ -58,7 +58,7 @@
   cursor: help;
 }
 
-.ProseMirror span[data-discussion-active="true"] {
+.ProseMirror .is-discussion-active {
   border-radius: 0.2rem;
   background-color: rgb(254 240 138 / 0.42);
   box-shadow: 0 0 0 2px rgb(250 204 21 / 0.3);

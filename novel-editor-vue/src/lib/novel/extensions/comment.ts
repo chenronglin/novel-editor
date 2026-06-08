@@ -1,6 +1,7 @@
 import { type Editor, Mark, mergeAttributes } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import type { EditorState } from "@tiptap/pm/state";
+import { createPrefixedId } from "../id";
 
 interface CommentRange {
   from: number;
@@ -14,12 +15,7 @@ interface CommentAttributes {
   range?: CommentRange;
 }
 
-let commentCounter = 0;
-
-const createCommentId = () => {
-  commentCounter += 1;
-  return `comment-${Date.now().toString(36)}-${commentCounter.toString(36)}`;
-};
+const createCommentId = () => createPrefixedId("comment");
 
 const clampPosition = (state: EditorState, pos: number) => Math.max(0, Math.min(pos, state.doc.content.size));
 

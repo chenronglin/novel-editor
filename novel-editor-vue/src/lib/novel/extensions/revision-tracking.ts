@@ -3,6 +3,7 @@ import type { Mark as ProseMirrorMark, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorState, Selection, Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
+import { createPrefixedId } from "../id";
 
 type RevisionKind = "insert" | "delete" | "replace";
 type RevisionRole = "inserted" | "deleted" | "original";
@@ -22,7 +23,12 @@ interface CompositionBase extends TextRange {
   slice: Slice;
 }
 
-const revisionTrackingKey = new PluginKey("revision-tracking");
+interface RevisionPluginState {
+  lastId: string | null;
+  lastPos: number | null;
+}
+
+const revisionTrackingKey = new PluginKey<RevisionPluginState>("revision-tracking");
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -35,12 +41,7 @@ declare module "@tiptap/core" {
   }
 }
 
-let revisionCounter = 0;
-
-const createRevisionId = () => {
-  revisionCounter += 1;
-  return `rev-${Date.now().toString(36)}-${revisionCounter.toString(36)}`;
-};
+const createRevisionId = () => createPrefixedId("rev");
 
 const clampPosition = (state: EditorState, pos: number) => Math.max(0, Math.min(pos, state.doc.content.size));
 
@@ -140,7 +141,7 @@ const isInsertedRevisionMark = (mark: ProseMirrorMark): mark is ProseMirrorMark 
 
 // 光标左侧若紧邻一段 role="inserted" 的修订，则返回其属性，用于把"贴着上一段继续输入"归并到同一修订。
 // 只看 nodeBefore：连续输入时光标始终在已输入文本的右侧，nodeBefore 已覆盖全部正确合并场景。
-const findMergeableInsertedRevision = (state: EditorState, pos: number): RevisionAttributes | null => {
+export const findMergeableInsertedRevision = (state: EditorState, pos: number): RevisionAttributes | null => {
   if (pos <= 0 || pos > state.doc.content.size) return null;
 
   const mark = state.doc.resolve(pos).nodeBefore?.marks.find(isInsertedRevisionMark);
@@ -152,7 +153,7 @@ const findMergeableInsertedRevision = (state: EditorState, pos: number): Revisio
 // 关键：复用相邻修订时必须连同它的 kind 一起复用——否则同一 id 下混入不同 kind（如"替换后紧接着续写"被判成 insert），
 // 会让本应连成一段的文本因 mark 不一致而无法合并，侧边栏按 kind 渲染时也会丢字。
 // 复用来源唯一为"文档邻接"（光标左侧紧邻的 inserted 修订），它天然携带正确的 id 与 kind，比易失的 plugin state 更可靠。
-const resolveInsertedRevision = (
+export const resolveInsertedRevision = (
   state: EditorState,
   from: number,
   allowMerge: boolean,
@@ -243,7 +244,7 @@ const applyInsertedText = (
 const markDeletedRange = (state: EditorState, range: TextRange, dispatch?: (tr: Transaction) => void) => {
   if (range.from === range.to || !rangeContainsText(state, range)) return false;
 
-  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
+  const pluginState = revisionTrackingKey.getState(state);
 
   let id: string;
   if (pluginState?.lastId && (range.from === pluginState.lastPos || range.to === pluginState.lastPos)) {
@@ -276,11 +277,13 @@ const markDeletedRange = (state: EditorState, range: TextRange, dispatch?: (tr: 
   return true;
 };
 
+// 粘贴一律取纯文本：修订追踪只跟踪纯文本插入，含 HTML 的粘贴也降级为纯文本，
+// 以保证粘贴内容同样被标记为"新增"（代价是丢弃富文本格式，这在修订场景通常是期望行为）。
+// 仅当剪贴板内容为文件（图片等）时放行，交给默认处理。
 const plainTextFromClipboard = (event: ClipboardEvent) => {
   const clipboardData = event.clipboardData;
 
   if (!clipboardData || clipboardData.files.length > 0) return null;
-  if (Array.from(clipboardData.types).includes("text/html")) return null;
 
   return clipboardData.getData("text/plain");
 };

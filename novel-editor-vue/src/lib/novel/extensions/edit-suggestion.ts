@@ -1,13 +1,9 @@
 import { type Editor, mergeAttributes, Node } from "@tiptap/core";
 import { VueNodeViewRenderer } from "@tiptap/vue-3";
 import EditSuggestionNodeView from "./EditSuggestionNodeView.vue";
+import { createPrefixedId } from "../id";
 
-let suggestionCounter = 0;
-
-const createSuggestionId = () => {
-  suggestionCounter += 1;
-  return `suggestion-${Date.now().toString(36)}-${suggestionCounter.toString(36)}`;
-};
+const createSuggestionId = () => createPrefixedId("suggestion");
 
 const getSelectionTopLevelInsertPosition = (editor: Editor) => {
   const { selection } = editor.state;

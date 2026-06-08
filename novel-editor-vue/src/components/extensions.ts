@@ -8,9 +8,9 @@ import {
   HighlightExtension,
   Placeholder,
   RevisionTracking,
+  DiscussionHighlight,
   StarterKit,
   TextStyle,
-  TiptapUnderline,
 } from "../lib/novel/extensions";
 
 const starterKit = StarterKit.configure({
@@ -24,7 +24,6 @@ const starterKit = StarterKit.configure({
   listItem: false,
   link: false,
   orderedList: false,
-  underline: false,
   horizontalRule: false,
   dropcursor: {
     color: "#DBEAFE",
@@ -43,7 +42,7 @@ export const defaultExtensions = [
   Comment,
   EditSuggestion,
   RevisionTracking,
-  TiptapUnderline,
+  DiscussionHighlight,
   HighlightExtension,
   TextStyle,
   Color,

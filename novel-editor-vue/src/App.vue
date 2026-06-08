@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { JSONContent } from "@tiptap/core";
 import TailwindAdvancedEditor from "./components/TailwindAdvancedEditor.vue";
+import { defaultEditorContent } from "./lib/content";
 import { Sun, Moon } from "lucide-vue-next";
 
 const isDark = ref(false);
@@ -12,6 +14,34 @@ const toggleDarkMode = () => {
   } else {
     document.documentElement.classList.remove("dark");
   }
+};
+
+// 持久化在应用层负责：编辑器组件本身不再耦合存储。
+const CONTENT_KEY = "novel-content";
+const HTML_KEY = "html-content";
+
+const loadContent = (): JSONContent => {
+  try {
+    const raw = window.localStorage.getItem(CONTENT_KEY);
+    if (raw) return JSON.parse(raw) as JSONContent;
+  } catch {
+    // 解析失败时回退到示例内容
+  }
+  return defaultEditorContent as JSONContent;
+};
+
+const content = ref<JSONContent>(loadContent());
+const saveStatus = ref("已保存");
+
+const handleUpdate = (value: JSONContent) => {
+  content.value = value;
+  saveStatus.value = "未保存";
+};
+
+const handleSave = (payload: { json: JSONContent; html: string }) => {
+  window.localStorage.setItem(CONTENT_KEY, JSON.stringify(payload.json));
+  window.localStorage.setItem(HTML_KEY, payload.html);
+  saveStatus.value = "已保存";
 };
 </script>
 
@@ -38,7 +68,7 @@ const toggleDarkMode = () => {
           type="button"
           :title="isDark ? '切换亮色模式' : '切换暗色模式'"
         >
-          <Sun v-slot="" v-if="isDark" class="h-4 w-4" />
+          <Sun v-if="isDark" class="h-4 w-4" />
           <Moon v-else class="h-4 w-4" />
         </button>
       </div>
@@ -46,7 +76,12 @@ const toggleDarkMode = () => {
 
     <!-- Main Content -->
     <main class="flex flex-col items-center px-3 py-6 sm:px-5">
-      <TailwindAdvancedEditor />
+      <TailwindAdvancedEditor
+        :model-value="content"
+        :save-status="saveStatus"
+        @update:model-value="handleUpdate"
+        @save="handleSave"
+      />
     </main>
   </div>
 </template>
