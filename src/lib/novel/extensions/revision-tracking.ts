@@ -182,10 +182,19 @@ const applyInsertedText = (
 
   const { state } = view;
   const isReplacement = options.forceReplace === true || range.from !== range.to;
-  const existingRevision =
-    !isReplacement && options.allowMerge ? findMergeableInsertedRevision(state, range.from) : null;
-  const id = existingRevision?.id ?? createRevisionId();
-  const insertedKind: RevisionKind = isReplacement ? "replace" : existingRevision?.kind ?? "insert";
+  
+  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
+  
+  let id: string;
+  if (pluginState?.lastId && range.from === pluginState.lastPos) {
+    id = pluginState.lastId;
+  } else {
+    const existingRevision =
+      !isReplacement && options.allowMerge ? findMergeableInsertedRevision(state, range.from) : null;
+    id = existingRevision?.id ?? createRevisionId();
+  }
+
+  const insertedKind: RevisionKind = isReplacement ? "replace" : "insert";
   const insertedMark = createRevisionMark(state, {
     id,
     kind: insertedKind,
@@ -233,8 +242,17 @@ const applyInsertedText = (
 const markDeletedRange = (state: EditorState, range: TextRange, dispatch?: (tr: Transaction) => void) => {
   if (range.from === range.to || !rangeContainsText(state, range)) return false;
 
+  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
+
+  let id: string;
+  if (pluginState?.lastId && (range.from === pluginState.lastPos || range.to === pluginState.lastPos)) {
+    id = pluginState.lastId;
+  } else {
+    id = createRevisionId();
+  }
+
   const mark = createRevisionMark(state, {
-    id: createRevisionId(),
+    id,
     kind: "delete",
     role: "deleted",
   });
@@ -245,7 +263,7 @@ const markDeletedRange = (state: EditorState, range: TextRange, dispatch?: (tr: 
 
   tr.setSelection(TextSelection.create(tr.doc, range.from));
   tr.setMeta(revisionTrackingKey, {
-    id: mark.attrs.id,
+    id,
     kind: "delete",
     role: "deleted",
     from: range.from,
@@ -274,7 +292,15 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
 
   if (insertedRange.from === insertedRange.to) return;
 
-  const id = createRevisionId();
+  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
+
+  let id: string;
+  if (pluginState?.lastId && insertedRange.from === pluginState.lastPos) {
+    id = pluginState.lastId;
+  } else {
+    id = createRevisionId();
+  }
+
   const isReplacement = base.from !== base.to;
   const insertedMark = createRevisionMark(state, {
     id,
@@ -321,7 +347,7 @@ export const RevisionTracking = Mark.create({
 
   inclusive: false,
 
-  excludes: "",
+  excludes: "revision",
 
   addAttributes() {
     return {
@@ -388,6 +414,37 @@ export const RevisionTracking = Mark.create({
     return [
       new Plugin({
         key: revisionTrackingKey,
+        state: {
+          init() {
+            return {
+              lastId: null,
+              lastPos: null,
+            };
+          },
+          apply(tr, value, _oldState, newState) {
+            if (tr.selectionSet && !tr.docChanged && !tr.getMeta(revisionTrackingKey)) {
+              return { lastId: null, lastPos: null };
+            }
+
+            const meta = tr.getMeta(revisionTrackingKey);
+            if (meta && meta.id) {
+              const lastPos = meta.kind === "delete" ? meta.from : meta.to;
+              return {
+                lastId: meta.id,
+                lastPos: lastPos,
+              };
+            }
+
+            if (tr.docChanged) {
+              return {
+                lastId: value.lastId,
+                lastPos: newState.selection.from,
+              };
+            }
+
+            return value;
+          },
+        },
         props: {
           handleTextInput: (view, from, to, text) => {
             if (isComposing || view.composing) return false;
