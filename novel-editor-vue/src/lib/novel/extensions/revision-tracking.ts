@@ -138,26 +138,33 @@ const isInsertedRevisionMark = (mark: ProseMirrorMark): mark is ProseMirrorMark 
   mark.attrs.role === "inserted" &&
   (mark.attrs.kind === "insert" || mark.attrs.kind === "replace");
 
-const sameRevision = (a: RevisionAttributes, b: RevisionAttributes) =>
-  a.id === b.id && a.kind === b.kind && a.role === b.role;
-
+// 光标左侧若紧邻一段 role="inserted" 的修订，则返回其属性，用于把"贴着上一段继续输入"归并到同一修订。
+// 只看 nodeBefore：连续输入时光标始终在已输入文本的右侧，nodeBefore 已覆盖全部正确合并场景。
 const findMergeableInsertedRevision = (state: EditorState, pos: number): RevisionAttributes | null => {
   if (pos <= 0 || pos > state.doc.content.size) return null;
 
-  const $pos = state.doc.resolve(pos);
-  const nodeBefore = $pos.nodeBefore;
-  const nodeAfter = $pos.nodeAfter;
-  const mark = nodeBefore?.marks.find(isInsertedRevisionMark);
+  const mark = state.doc.resolve(pos).nodeBefore?.marks.find(isInsertedRevisionMark);
 
-  if (!mark) return null;
+  return mark ? mark.attrs : null;
+};
 
-  const continuesAfterCursor = nodeAfter?.marks.some(
-    (nextMark) => isRevisionMark(nextMark) && sameRevision(mark.attrs, nextMark.attrs),
-  );
+// 决定一次插入应归属的修订 id 与 kind。
+// 关键：复用相邻修订时必须连同它的 kind 一起复用——否则同一 id 下混入不同 kind（如"替换后紧接着续写"被判成 insert），
+// 会让本应连成一段的文本因 mark 不一致而无法合并，侧边栏按 kind 渲染时也会丢字。
+// 复用来源唯一为"文档邻接"（光标左侧紧邻的 inserted 修订），它天然携带正确的 id 与 kind，比易失的 plugin state 更可靠。
+const resolveInsertedRevision = (
+  state: EditorState,
+  from: number,
+  allowMerge: boolean,
+  isReplacement: boolean,
+): { id: string; kind: RevisionKind } => {
+  if (allowMerge) {
+    const existing = findMergeableInsertedRevision(state, from);
 
-  if (continuesAfterCursor) return null;
+    if (existing) return { id: existing.id, kind: existing.kind };
+  }
 
-  return mark.attrs;
+  return { id: createRevisionId(), kind: isReplacement ? "replace" : "insert" };
 };
 
 const getTypingMarks = (state: EditorState) => {
@@ -182,19 +189,13 @@ const applyInsertedText = (
 
   const { state } = view;
   const isReplacement = options.forceReplace === true || range.from !== range.to;
-  
-  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
-  
-  let id: string;
-  if (pluginState?.lastId && range.from === pluginState.lastPos) {
-    id = pluginState.lastId;
-  } else {
-    const existingRevision =
-      !isReplacement && options.allowMerge ? findMergeableInsertedRevision(state, range.from) : null;
-    id = existingRevision?.id ?? createRevisionId();
-  }
+  const { id, kind: insertedKind } = resolveInsertedRevision(
+    state,
+    range.from,
+    !isReplacement && options.allowMerge,
+    isReplacement,
+  );
 
-  const insertedKind: RevisionKind = isReplacement ? "replace" : "insert";
   const insertedMark = createRevisionMark(state, {
     id,
     kind: insertedKind,
@@ -213,7 +214,7 @@ const applyInsertedText = (
   if (isReplacement && rangeContainsText(state, range)) {
     const originalMark = createRevisionMark(state, {
       id,
-      kind: "replace",
+      kind: insertedKind,
       role: "original",
     });
 
@@ -228,7 +229,7 @@ const applyInsertedText = (
   tr.setSelection(TextSelection.create(tr.doc, insertedTo));
   tr.setMeta(revisionTrackingKey, {
     id,
-    kind: isReplacement ? "replace" : insertedKind,
+    kind: insertedKind,
     role: "inserted",
     from: range.from,
     to: insertedTo,
@@ -292,19 +293,17 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
 
   if (insertedRange.from === insertedRange.to) return;
 
-  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
-
-  let id: string;
-  if (pluginState?.lastId && insertedRange.from === pluginState.lastPos) {
-    id = pluginState.lastId;
-  } else {
-    id = createRevisionId();
-  }
-
   const isReplacement = base.from !== base.to;
+  const { id, kind: insertedKind } = resolveInsertedRevision(
+    state,
+    insertedRange.from,
+    !isReplacement,
+    isReplacement,
+  );
+
   const insertedMark = createRevisionMark(state, {
     id,
-    kind: isReplacement ? "replace" : "insert",
+    kind: insertedKind,
     role: "inserted",
   });
 
@@ -316,7 +315,7 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
   if (isReplacement && base.slice.size > 0) {
     const originalMark = createRevisionMark(state, {
       id,
-      kind: "replace",
+      kind: insertedKind,
       role: "original",
     });
 
@@ -332,7 +331,7 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
   tr.setSelection(TextSelection.create(tr.doc, cursorPos));
   tr.setMeta(revisionTrackingKey, {
     id,
-    kind: isReplacement ? "replace" : "insert",
+    kind: insertedKind,
     role: "inserted",
     from: insertedRange.from,
     to: cursorPos,
@@ -499,62 +498,6 @@ export const RevisionTracking = Mark.create({
               return false;
             },
           },
-        },
-        appendTransaction(transactions, _oldState, newState) {
-          if (isComposing) return null;
-          const hasDocChanged = transactions.some((tr) => tr.docChanged);
-          if (!hasDocChanged) return null;
-
-          let tr: Transaction | null = null;
-
-          newState.doc.descendants((node, pos) => {
-            if (node.isTextblock) {
-              const activeMarks = new Map<string, ProseMirrorMark>();
-
-              node.forEach((child, offset) => {
-                const childPos = pos + 1 + offset;
-                if (child.isText) {
-                  const seenTypes = new Set<string>();
-
-                  child.marks.forEach((mark) => {
-                    seenTypes.add(mark.type.name);
-
-                    const lastMark = activeMarks.get(mark.type.name);
-                    if (lastMark) {
-                      const kindA = lastMark.attrs.kind;
-                      const kindB = mark.attrs.kind;
-                      if (kindA !== undefined && kindA === kindB) {
-                        // Same type and same kind! Merge them by applying lastMark
-                        if (!lastMark.eq(mark)) {
-                          if (!tr) tr = newState.tr;
-                          const from = childPos;
-                          const to = childPos + child.nodeSize;
-                          tr.removeMark(from, to, mark.type);
-                          tr.addMark(from, to, lastMark);
-                        }
-                      } else {
-                        activeMarks.set(mark.type.name, mark);
-                      }
-                    } else {
-                      activeMarks.set(mark.type.name, mark);
-                    }
-                  });
-
-                  // Clear active marks for types not present in this child
-                  for (const typeName of Array.from(activeMarks.keys())) {
-                    if (!seenTypes.has(typeName)) {
-                      activeMarks.delete(typeName);
-                    }
-                  }
-                } else {
-                  activeMarks.clear();
-                }
-              });
-            }
-            return true;
-          });
-
-          return tr;
         },
       }),
     ];
