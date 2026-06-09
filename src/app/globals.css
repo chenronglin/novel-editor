@@ -46,6 +46,9 @@
     --novel-highlight-orange: #faebdd;
     --novel-highlight-pink: #faf1f5;
     --novel-highlight-gray: #f1f1ef;
+    --revision-inserted: #15803d;
+    --revision-deleted: #dc2626;
+    --revision-original: #ca8a04;
   }
 
   .dark {
@@ -90,6 +93,9 @@
     --novel-highlight-orange: #5c3a1a;
     --novel-highlight-pink: #5c1a3a;
     --novel-highlight-gray: #3a3a3a;
+    --revision-inserted: #4ade80;
+    --revision-deleted: #f87171;
+    --revision-original: #fbbf24;
   }
 }
 

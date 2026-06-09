@@ -1,12 +1,12 @@
 "use client";
 
-import type { EditorInstance } from "@/lib/novel";
+import { setActiveDiscussion, type EditorInstance } from "@/lib/novel";
 import { cn } from "@/lib/utils";
 import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
-import type { EditorState } from "@tiptap/pm/state";
+import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { ArrowRightLeft, MessageSquareText, Minus, Plus, Replace, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type DiscussionSource = "comment" | "revision";
 type DiscussionKind = "comment" | "insert" | "delete" | "replace";
@@ -223,20 +223,6 @@ const getActiveKeyFromSelection = (state: EditorState) => {
   return activeKey;
 };
 
-const subscribeToEditor = (editor: EditorInstance | null, onStoreChange: () => void) => {
-  if (!editor) return () => {};
-
-  const handleChange = () => onStoreChange();
-
-  editor.on("transaction", handleChange);
-  editor.on("selectionUpdate", handleChange);
-
-  return () => {
-    editor.off("transaction", handleChange);
-    editor.off("selectionUpdate", handleChange);
-  };
-};
-
 const clampPosition = (editor: EditorInstance, pos: number) => Math.max(0, Math.min(pos, editor.state.doc.content.size));
 
 const selectDiscussionItem = (editor: EditorInstance, item: DiscussionItem) => {
@@ -272,13 +258,6 @@ const removeDiscussionMark = (editor: EditorInstance, item: DiscussionItem) => {
   editor.view.dispatch(tr.scrollIntoView());
   editor.view.focus();
 };
-
-const useEditorStateSnapshot = (editor: EditorInstance | null) =>
-  useSyncExternalStore(
-    useCallback((onStoreChange) => subscribeToEditor(editor, onStoreChange), [editor]),
-    () => editor?.state ?? null,
-    () => null,
-  );
 
 const getKindIcon = (kind: DiscussionKind) => {
   if (kind === "comment") return MessageSquareText;
@@ -333,31 +312,78 @@ const renderItemDetail = (item: DiscussionItem) => {
 };
 
 export default function DiscussionSidebar({ editor }: DiscussionSidebarProps) {
-  const editorState = useEditorStateSnapshot(editor);
+  const [items, setItems] = useState<DiscussionItem[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
-  const items = useMemo(() => (editorState ? collectDiscussionItems(editorState) : []), [editorState]);
-  const activeKey = useMemo(() => (editorState ? getActiveKeyFromSelection(editorState) : null), [editorState]);
+  const itemsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+
+    if (!editor) {
+      queueMicrotask(() => {
+        if (disposed) return;
+
+        setItems([]);
+        setActiveKey(null);
+      });
+
+      return () => {
+        disposed = true;
+      };
+    }
+
+    const refreshAll = () => {
+      if (disposed) return;
+
+      setItems(collectDiscussionItems(editor.state));
+      setActiveKey(getActiveKeyFromSelection(editor.state));
+    };
+
+    queueMicrotask(refreshAll);
+
+    const clearItemsTimer = () => {
+      if (!itemsTimer.current) return;
+
+      clearTimeout(itemsTimer.current);
+      itemsTimer.current = null;
+    };
+
+    const updateActiveKey = () => {
+      if (disposed) return;
+
+      setActiveKey(getActiveKeyFromSelection(editor.state));
+    };
+
+    const scheduleItemsUpdate = () => {
+      clearItemsTimer();
+      itemsTimer.current = setTimeout(() => {
+        itemsTimer.current = null;
+        refreshAll();
+      }, 250);
+    };
+
+    const handleTransaction = ({ transaction }: { transaction: Transaction }) => {
+      if (transaction.docChanged) scheduleItemsUpdate();
+      updateActiveKey();
+    };
+
+    editor.on("transaction", handleTransaction);
+
+    return () => {
+      disposed = true;
+      editor.off("transaction", handleTransaction);
+      clearItemsTimer();
+      setActiveDiscussion(editor, null);
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (!editor) return;
 
-    const dom = editor.view.dom;
-
-    dom.querySelectorAll<HTMLElement>("span[data-discussion-active]").forEach((element) => {
-      element.removeAttribute("data-discussion-active");
-    });
-
     const activeItem = items.find((item) => item.key === activeKey);
 
-    if (!activeItem) return;
-
-    const attributeName = activeItem.source === "comment" ? "data-comment-id" : "data-revision-id";
-
-    dom.querySelectorAll<HTMLElement>(`span[${attributeName}]`).forEach((element) => {
-      if (element.getAttribute(attributeName) === activeItem.id) {
-        element.setAttribute("data-discussion-active", "true");
-      }
-    });
+    setActiveDiscussion(editor, activeItem?.id ?? null);
   }, [activeKey, editor, items]);
 
   useEffect(() => {

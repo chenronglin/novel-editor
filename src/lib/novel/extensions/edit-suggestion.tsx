@@ -5,6 +5,7 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { Check, Handshake, PencilLine, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPrefixedId } from "../id";
 
 interface EditSuggestionAttributes {
   id?: string | null;
@@ -13,12 +14,7 @@ interface EditSuggestionAttributes {
   createdAt?: string | null;
 }
 
-let suggestionCounter = 0;
-
-const createSuggestionId = () => {
-  suggestionCounter += 1;
-  return `suggestion-${Date.now().toString(36)}-${suggestionCounter.toString(36)}`;
-};
+const createSuggestionId = () => createPrefixedId("suggestion");
 
 const getSelectionTopLevelInsertPosition = (editor: Editor) => {
   const { selection } = editor.state;

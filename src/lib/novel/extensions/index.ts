@@ -7,6 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import ActiveBlock from "./active-block";
 import Comment from "./comment";
 import CustomKeymap from "./custom-keymap";
+import DiscussionHighlight from "./discussion-highlight";
 import EditSuggestion from "./edit-suggestion";
 import RevisionTracking from "./revision-tracking";
 
@@ -29,10 +30,12 @@ const HighlightExtension = Highlight.configure({
 export * from "./ai-highlight";
 export * from "./active-block";
 export * from "./comment";
+export * from "./discussion-highlight";
 export * from "./edit-suggestion";
 export * from "./revision-tracking";
 export {
   ActiveBlock,
+  DiscussionHighlight,
   EditSuggestion,
   PlaceholderExtension as Placeholder,
   StarterKit,

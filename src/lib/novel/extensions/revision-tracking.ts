@@ -3,6 +3,7 @@ import type { Mark as ProseMirrorMark, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorState, Selection, Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
+import { createPrefixedId } from "../id";
 
 type RevisionKind = "insert" | "delete" | "replace";
 type RevisionRole = "inserted" | "deleted" | "original";
@@ -22,7 +23,12 @@ interface CompositionBase extends TextRange {
   slice: Slice;
 }
 
-const revisionTrackingKey = new PluginKey("revision-tracking");
+interface RevisionPluginState {
+  lastId: string | null;
+  lastPos: number | null;
+}
+
+const revisionTrackingKey = new PluginKey<RevisionPluginState>("revision-tracking");
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -35,12 +41,7 @@ declare module "@tiptap/core" {
   }
 }
 
-let revisionCounter = 0;
-
-const createRevisionId = () => {
-  revisionCounter += 1;
-  return `rev-${Date.now().toString(36)}-${revisionCounter.toString(36)}`;
-};
+const createRevisionId = () => createPrefixedId("rev");
 
 const clampPosition = (state: EditorState, pos: number) => Math.max(0, Math.min(pos, state.doc.content.size));
 
@@ -138,26 +139,27 @@ const isInsertedRevisionMark = (mark: ProseMirrorMark): mark is ProseMirrorMark 
   mark.attrs.role === "inserted" &&
   (mark.attrs.kind === "insert" || mark.attrs.kind === "replace");
 
-const sameRevision = (a: RevisionAttributes, b: RevisionAttributes) =>
-  a.id === b.id && a.kind === b.kind && a.role === b.role;
-
-const findMergeableInsertedRevision = (state: EditorState, pos: number): RevisionAttributes | null => {
+export const findMergeableInsertedRevision = (state: EditorState, pos: number): RevisionAttributes | null => {
   if (pos <= 0 || pos > state.doc.content.size) return null;
 
-  const $pos = state.doc.resolve(pos);
-  const nodeBefore = $pos.nodeBefore;
-  const nodeAfter = $pos.nodeAfter;
-  const mark = nodeBefore?.marks.find(isInsertedRevisionMark);
+  const mark = state.doc.resolve(pos).nodeBefore?.marks.find(isInsertedRevisionMark);
 
-  if (!mark) return null;
+  return mark ? mark.attrs : null;
+};
 
-  const continuesAfterCursor = nodeAfter?.marks.some(
-    (nextMark) => isRevisionMark(nextMark) && sameRevision(mark.attrs, nextMark.attrs),
-  );
+export const resolveInsertedRevision = (
+  state: EditorState,
+  from: number,
+  allowMerge: boolean,
+  isReplacement: boolean,
+): { id: string; kind: RevisionKind } => {
+  if (allowMerge) {
+    const existing = findMergeableInsertedRevision(state, from);
 
-  if (continuesAfterCursor) return null;
+    if (existing) return { id: existing.id, kind: existing.kind };
+  }
 
-  return mark.attrs;
+  return { id: createRevisionId(), kind: isReplacement ? "replace" : "insert" };
 };
 
 const getTypingMarks = (state: EditorState) => {
@@ -182,19 +184,13 @@ const applyInsertedText = (
 
   const { state } = view;
   const isReplacement = options.forceReplace === true || range.from !== range.to;
-  
-  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
-  
-  let id: string;
-  if (pluginState?.lastId && range.from === pluginState.lastPos) {
-    id = pluginState.lastId;
-  } else {
-    const existingRevision =
-      !isReplacement && options.allowMerge ? findMergeableInsertedRevision(state, range.from) : null;
-    id = existingRevision?.id ?? createRevisionId();
-  }
+  const { id, kind: insertedKind } = resolveInsertedRevision(
+    state,
+    range.from,
+    !isReplacement && options.allowMerge,
+    isReplacement,
+  );
 
-  const insertedKind: RevisionKind = isReplacement ? "replace" : "insert";
   const insertedMark = createRevisionMark(state, {
     id,
     kind: insertedKind,
@@ -213,7 +209,7 @@ const applyInsertedText = (
   if (isReplacement && rangeContainsText(state, range)) {
     const originalMark = createRevisionMark(state, {
       id,
-      kind: "replace",
+      kind: insertedKind,
       role: "original",
     });
 
@@ -228,7 +224,7 @@ const applyInsertedText = (
   tr.setSelection(TextSelection.create(tr.doc, insertedTo));
   tr.setMeta(revisionTrackingKey, {
     id,
-    kind: isReplacement ? "replace" : insertedKind,
+    kind: insertedKind,
     role: "inserted",
     from: range.from,
     to: insertedTo,
@@ -242,7 +238,7 @@ const applyInsertedText = (
 const markDeletedRange = (state: EditorState, range: TextRange, dispatch?: (tr: Transaction) => void) => {
   if (range.from === range.to || !rangeContainsText(state, range)) return false;
 
-  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
+  const pluginState = revisionTrackingKey.getState(state);
 
   let id: string;
   if (pluginState?.lastId && (range.from === pluginState.lastPos || range.to === pluginState.lastPos)) {
@@ -279,7 +275,6 @@ const plainTextFromClipboard = (event: ClipboardEvent) => {
   const clipboardData = event.clipboardData;
 
   if (!clipboardData || clipboardData.files.length > 0) return null;
-  if (Array.from(clipboardData.types).includes("text/html")) return null;
 
   return clipboardData.getData("text/plain");
 };
@@ -292,19 +287,17 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
 
   if (insertedRange.from === insertedRange.to) return;
 
-  const pluginState = revisionTrackingKey.getState(state) as { lastId: string | null; lastPos: number | null } | undefined;
-
-  let id: string;
-  if (pluginState?.lastId && insertedRange.from === pluginState.lastPos) {
-    id = pluginState.lastId;
-  } else {
-    id = createRevisionId();
-  }
-
   const isReplacement = base.from !== base.to;
+  const { id, kind: insertedKind } = resolveInsertedRevision(
+    state,
+    insertedRange.from,
+    !isReplacement,
+    isReplacement,
+  );
+
   const insertedMark = createRevisionMark(state, {
     id,
-    kind: isReplacement ? "replace" : "insert",
+    kind: insertedKind,
     role: "inserted",
   });
 
@@ -316,7 +309,7 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
   if (isReplacement && base.slice.size > 0) {
     const originalMark = createRevisionMark(state, {
       id,
-      kind: "replace",
+      kind: insertedKind,
       role: "original",
     });
 
@@ -332,7 +325,7 @@ const finalizeComposition = (view: EditorView, base: CompositionBase) => {
   tr.setSelection(TextSelection.create(tr.doc, cursorPos));
   tr.setMeta(revisionTrackingKey, {
     id,
-    kind: isReplacement ? "replace" : "insert",
+    kind: insertedKind,
     role: "inserted",
     from: insertedRange.from,
     to: cursorPos,
@@ -412,7 +405,7 @@ export const RevisionTracking = Mark.create({
     let compositionTimer: ReturnType<typeof setTimeout> | null = null;
 
     return [
-      new Plugin({
+      new Plugin<RevisionPluginState>({
         key: revisionTrackingKey,
         state: {
           init() {
@@ -499,62 +492,6 @@ export const RevisionTracking = Mark.create({
               return false;
             },
           },
-        },
-        appendTransaction(transactions, _oldState, newState) {
-          if (isComposing) return null;
-          const hasDocChanged = transactions.some((tr) => tr.docChanged);
-          if (!hasDocChanged) return null;
-
-          let tr: Transaction | null = null;
-
-          newState.doc.descendants((node, pos) => {
-            if (node.isTextblock) {
-              const activeMarks = new Map<string, ProseMirrorMark>();
-
-              node.forEach((child, offset) => {
-                const childPos = pos + 1 + offset;
-                if (child.isText) {
-                  const seenTypes = new Set<string>();
-
-                  child.marks.forEach((mark) => {
-                    seenTypes.add(mark.type.name);
-
-                    const lastMark = activeMarks.get(mark.type.name);
-                    if (lastMark) {
-                      const kindA = lastMark.attrs.kind;
-                      const kindB = mark.attrs.kind;
-                      if (kindA !== undefined && kindA === kindB) {
-                        // Same type and same kind! Merge them by applying lastMark
-                        if (!lastMark.eq(mark)) {
-                          if (!tr) tr = newState.tr;
-                          const from = childPos;
-                          const to = childPos + child.nodeSize;
-                          tr.removeMark(from, to, mark.type);
-                          tr.addMark(from, to, lastMark);
-                        }
-                      } else {
-                        activeMarks.set(mark.type.name, mark);
-                      }
-                    } else {
-                      activeMarks.set(mark.type.name, mark);
-                    }
-                  });
-
-                  // Clear active marks for types not present in this child
-                  for (const typeName of Array.from(activeMarks.keys())) {
-                    if (!seenTypes.has(typeName)) {
-                      activeMarks.delete(typeName);
-                    }
-                  }
-                } else {
-                  activeMarks.clear();
-                }
-              });
-            }
-            return true;
-          });
-
-          return tr;
         },
       }),
     ];

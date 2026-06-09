@@ -10,21 +10,6 @@ export {
   type JSONContent,
 } from "./components";
 
-// Extensions
-export {
-  ActiveBlock,
-  AIHighlight,
-  removeAIHighlight,
-  addAIHighlight,
-  Placeholder,
-  StarterKit,
-  TiptapUnderline,
-  TextStyle,
-  Color,
-  HighlightExtension,
-  CustomKeymap,
-  EditSuggestion,
-  CharacterCount,
-  RevisionTracking,
-  Comment,
-} from "./extensions";
+// Extensions and shared helpers
+export * from "./extensions";
+export * from "./id";
